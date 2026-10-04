@@ -30,6 +30,52 @@ python analysis/export_csv.py --route-id R1 --start-date 2026-09-01 --end-date 2
 
 Dry run needs only `ROUTES_JSON` and writes/calls nothing. `--force` bypasses only scheduling. Export supports date, route, weekday, and time filters.
 
+## Create and run the local dashboard
+
+The repository includes a Streamlit dashboard in `dashboard/app.py` and a pure
+analysis layer in `analysis/commute_metrics.py`. It is separate from the
+collector, is read-only with respect to traffic observations, and shows matching
+**Outbound** and **Return** tabs, plus a **Route comparison** tab. The comparison
+tab shows `R1`–`R5` side by side for one selected direction and departure slot,
+including percentiles, delay, threshold risk, sample size, and coverage without
+inventing a single commute score. Directions follow the collector rule exactly:
+13:00 through before 19:00 is return, and the other scheduled slots are outbound.
+
+1. Create the existing collector configuration first, following the local cron
+   setup below. The dashboard reads `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` from the
+   existing owner-only collector file at `~/.config/traffic-collector/collector.env`.
+   Its Python code only performs `select` queries; the key is never sent to the
+   browser. Keep the dashboard bound to localhost or access it through an SSH
+   tunnel.
+2. From the repository root, install dependencies, make the runner executable,
+   then start the dashboard:
+
+```bash
+cd "/path/to/Google Maps Route Duration"
+.venv/bin/pip install -r requirements.txt
+chmod +x scripts/run_dashboard.sh
+scripts/run_dashboard.sh
+```
+
+The runner binds only to `127.0.0.1` by default. Open the Streamlit URL it
+prints (normally `http://127.0.0.1:8501`) locally. If the collector server is
+remote, create a tunnel from your computer, then open the same URL locally:
+
+```bash
+ssh -L 8501:127.0.0.1:8501 your-user@your-server
+```
+
+### Dashboard data caching
+
+The dashboard fetches the selected date range from Supabase and caches that
+result in the Streamlit process for **five minutes**. Switching route,
+Outbound/Return tab, departure slot, or thresholds uses the cached frame and
+does not make another Supabase request. Changing the date range uses a separate
+cached entry and fetches only that new range. The **Refresh data** button clears
+the cache and fetches again. Reads are paginated, so a selected range remains
+complete after it grows past the API's default result page size.
+
 ## Local Linux cron
 
 The local runner loads credentials from `~/.config/traffic-collector/collector.env`, writes operational output to `~/.local/state/traffic-collector/collector.log`, and uses `flock` so a delayed cron run cannot overlap the next one. It runs exactly at the valid weekday sampling slots in `America/Los_Angeles`, including across DST changes.
