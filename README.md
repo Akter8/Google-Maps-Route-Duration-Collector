@@ -56,10 +56,13 @@ local collector (service_role write access) -> Supabase <- Streamlit dashboard (
    creation/admin privileges, and only column-level `SELECT` on
    `public.traffic_observations`. It explicitly has no access to `api_usage`,
    sequences, or functions and no write privileges.
-4. In Supabase **Connect**, select the Session Pooler connection details for an
-   externally hosted application. Build a URL using `dashboard_reader`, that
-   generated password, and `sslmode=require`. Do not use the Supabase REST URL,
-   an API key, or `SUPABASE_SERVICE_ROLE_KEY` for the dashboard.
+4. In Supabase **Connect**, select and copy the **Session Pooler** connection
+   string for an externally hosted application. Keep its exact host and port;
+   do not construct the pooler hostname. Replace the username with
+   `dashboard_reader.YOUR_PROJECT_REF` (custom roles require the project ref on
+   shared-pooler connections), replace only the password, and keep
+   `sslmode=require`. Do not use the Supabase REST URL, an API key, or
+   `SUPABASE_SERVICE_ROLE_KEY` for the dashboard.
 
 The SQL script ends with privilege checks. They should report `true` only for
 `can_select_observations`; all other displayed permissions should be `false`.
@@ -75,7 +78,7 @@ The SQL script ends with privilege checks. They should report `true` only for
 
 ```toml
 [database]
-url = "postgresql://dashboard_reader:YOUR_LONG_RANDOM_PASSWORD@YOUR_PROJECT_POOLER_HOST:5432/postgres?sslmode=require"
+url = "postgresql://dashboard_reader.YOUR_PROJECT_REF:YOUR_LONG_RANDOM_PASSWORD@YOUR_PROJECT_POOLER_HOST:5432/postgres?sslmode=require"
 ```
 
 URL-encode the password if it contains URL-reserved characters such as `@`,
