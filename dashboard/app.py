@@ -197,8 +197,9 @@ def main() -> None:
         return
     try:
         frame = load_data(start_date, end_date, TIMEZONE)
-    except Exception:
+    except Exception as exc:
         st.error("Could not load observations. Check the dashboard_reader database connection in Streamlit Secrets and try again.")
+        st.error(f"Could not load observations: {exc}")
         return
     observed_routes = set(frame["route_id"].dropna().unique()) if not frame.empty else set()
     available_routes = sorted({*(f"R{i}" for i in range(1, 6)), *observed_routes})
