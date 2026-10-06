@@ -8,6 +8,8 @@ run/
 *.sqlite3
 credentials*
 secrets*
+.streamlit/secrets.toml
+!.streamlit/secrets.toml.example
 config/routes.json
 __pycache__/
 *.py[cod]

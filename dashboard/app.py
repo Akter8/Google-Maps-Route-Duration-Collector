@@ -1,7 +1,6 @@
 """Personal, read-only commute reliability dashboard."""
 from __future__ import annotations
 
-import os
 from datetime import date, timedelta
 
 import altair as alt
@@ -14,7 +13,7 @@ from analysis.commute_metrics import (
 )
 from dashboard.data import fetch_observations
 
-TIMEZONE = os.getenv("TRAFFIC_TIMEZONE", "America/Los_Angeles")
+TIMEZONE = "America/Los_Angeles"
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -191,8 +190,8 @@ def main() -> None:
         return
     try:
         frame = load_data(start_date, end_date, TIMEZONE)
-    except Exception as exc:
-        st.error(f"Could not load observations: {exc}")
+    except Exception:
+        st.error("Could not load observations. Check the dashboard_reader database connection in Streamlit Secrets and try again.")
         return
     observed_routes = set(frame["route_id"].dropna().unique()) if not frame.empty else set()
     available_routes = sorted({*(f"R{i}" for i in range(1, 6)), *observed_routes})

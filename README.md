@@ -30,51 +30,105 @@ python analysis/export_csv.py --route-id R1 --start-date 2026-09-01 --end-date 2
 
 Dry run needs only `ROUTES_JSON` and writes/calls nothing. `--force` bypasses only scheduling. Export supports date, route, weekday, and time filters.
 
-## Create and run the local dashboard
+## Streamlit Community Cloud Deployment
 
-The repository includes a Streamlit dashboard in `dashboard/app.py` and a pure
-analysis layer in `analysis/commute_metrics.py`. It is separate from the
-collector, is read-only with respect to traffic observations, and shows matching
-**Outbound** and **Return** tabs, plus a **Route comparison** tab. The comparison
-tab shows `R1`–`R5` side by side for one selected direction and departure slot,
-including percentiles, delay, threshold risk, sample size, and coverage without
-inventing a single commute score. Directions follow the collector rule exactly:
-13:00 through before 19:00 is return, and the other scheduled slots are outbound.
+The repository includes a Streamlit dashboard at `dashboard/app.py` and a pure
+analysis layer at `analysis/commute_metrics.py`. It has Outbound, Return, and
+Route comparison views. The dashboard is deployable directly from GitHub to
+Streamlit Community Cloud: it never contacts the local collector, WireGuard, or
+the local server. Supabase is the single source of truth:
 
-1. Create the existing collector configuration first, following the local cron
-   setup below. The dashboard reads `SUPABASE_URL` and
-   `SUPABASE_SERVICE_ROLE_KEY` from the
-   existing owner-only collector file at `~/.config/traffic-collector/collector.env`.
-   Its Python code only performs `select` queries; the key is never sent to the
-   browser. Keep the dashboard bound to localhost or access it through an SSH
-   tunnel.
-2. From the repository root, install dependencies, make the runner executable,
-   then start the dashboard:
+```text
+local collector (service_role write access) -> Supabase <- Streamlit dashboard (dashboard_reader SELECT only)
+```
+
+### Database identity (one-time Supabase setup)
+
+1. Run [`supabase_schema.sql`](supabase_schema.sql) first if the tables do not
+   already exist.
+2. In the Supabase SQL Editor, open
+   [`supabase_dashboard_reader.sql`](supabase_dashboard_reader.sql), replace
+   `REPLACE_WITH_A_LONG_RANDOM_PASSWORD` with a newly generated password, and
+   execute it manually. Do not save that edited script in Git.
+3. The current schema does not enable RLS, so database grants are the access
+   boundary for this direct PostgreSQL connection. The script creates
+   `dashboard_reader` with `LOGIN`, `NOINHERIT`, no object
+   creation/admin privileges, and only column-level `SELECT` on
+   `public.traffic_observations`. It explicitly has no access to `api_usage`,
+   sequences, or functions and no write privileges.
+4. In Supabase **Connect**, select the Session Pooler connection details for an
+   externally hosted application. Build a URL using `dashboard_reader`, that
+   generated password, and `sslmode=require`. Do not use the Supabase REST URL,
+   an API key, or `SUPABASE_SERVICE_ROLE_KEY` for the dashboard.
+
+The SQL script ends with privilege checks. They should report `true` only for
+`can_select_observations`; all other displayed permissions should be `false`.
+
+### Streamlit Cloud secrets and deployment
+
+1. Push this repository to GitHub without any credentials.
+2. Create an app in Streamlit Community Cloud, select that repository/branch,
+   and use `dashboard/app.py` as the entry point. Community Cloud installs
+   [`requirements.txt`](requirements.txt), including the PostgreSQL driver.
+3. In the app's **Settings → Secrets**, enter exactly this placeholder-shaped
+   TOML with your real pooler URL only in the Cloud secret store:
+
+```toml
+[database]
+url = "postgresql://dashboard_reader:YOUR_LONG_RANDOM_PASSWORD@YOUR_PROJECT_POOLER_HOST:5432/postgres?sslmode=require"
+```
+
+URL-encode the password if it contains URL-reserved characters such as `@`,
+`:` or `/`.
+
+4. Keep the app private and use Streamlit Community Cloud's sharing/access
+   controls to invite only approved accounts. Do not make the app public: the
+   underlying commute data is personal. Streamlit users receive rendered data
+   only; they never receive the database URL or password.
+
+To rotate access, run the commented `ALTER ROLE` command in
+`supabase_dashboard_reader.sql` with a new password, then replace only the
+Cloud/local secret and restart/redeploy the app. Remove access for departed
+users in Streamlit Cloud as well.
+
+### Local dashboard development
+
+Copy the safe example and fill in the *dashboard_reader* Session Pooler URL;
+do not copy collector credentials:
 
 ```bash
-cd "/path/to/Google Maps Route Duration"
+mkdir -p .streamlit
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+chmod 600 .streamlit/secrets.toml
+# Edit .streamlit/secrets.toml locally with the dashboard_reader URL.
 .venv/bin/pip install -r requirements.txt
-chmod +x scripts/run_dashboard.sh
 scripts/run_dashboard.sh
 ```
 
-The runner binds only to `127.0.0.1` by default. Open the Streamlit URL it
-prints (normally `http://127.0.0.1:8501`) locally. If the collector server is
-remote, create a tunnel from your computer, then open the same URL locally:
+`scripts/run_dashboard.sh` binds locally to `127.0.0.1`, but it does not read
+`collector.env`; Cloud runs use Streamlit Secrets instead. If the secret is
+missing, the app shows an actionable configuration error without displaying a
+credential or connection URL.
 
-```bash
-ssh -L 8501:127.0.0.1:8501 your-user@your-server
-```
+### Dashboard reads and caching
 
-### Dashboard data caching
+For each selected date range the dashboard makes one parameterized `SELECT`
+against the eight columns it needs, then calculates all filters, percentiles,
+metrics, and charts locally with pandas. `st.cache_data` caches that result for
+five minutes; the **Refresh data** button clears it. There is no arbitrary SQL
+UI and no dashboard write path.
 
-The dashboard fetches the selected date range from Supabase and caches that
-result in the Streamlit process for **five minutes**. Switching route,
-Outbound/Return tab, departure slot, or thresholds uses the cached frame and
-does not make another Supabase request. Changing the date range uses a separate
-cached entry and fetches only that new range. The **Refresh data** button clears
-the cache and fetches again. Reads are paginated, so a selected range remains
-complete after it grows past the API's default result page size.
+### Credential separation
+
+- **Collector credentials:** `GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, and
+  `SUPABASE_SERVICE_ROLE_KEY` stay in the local owner-only
+  `~/.config/traffic-collector/collector.env`. They are never used by the
+  dashboard or put in Streamlit Secrets.
+- **Dashboard credentials:** only the `dashboard_reader` PostgreSQL URL belongs
+  in Streamlit Secrets or local `.streamlit/secrets.toml`.
+- Never commit `.streamlit/secrets.toml`, `.env` files, route addresses,
+  passwords, database URLs containing passwords, API keys, or service-role
+  keys. `.streamlit/secrets.toml` is ignored by Git.
 
 ## Local Linux cron
 
