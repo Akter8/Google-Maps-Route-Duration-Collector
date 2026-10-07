@@ -83,7 +83,7 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
     summary = departure_time_summary(direction_data, thresholds)
     st.subheader("Departure-time comparison")
     st.caption("Percentiles use successful observations only. Counts and unique days are shown for every slot.")
-    st.dataframe(styled_dataframe(formatted_summary(summary, thresholds)), hide_index=True, use_container_width=True)
+    st.dataframe(styled_dataframe(formatted_summary(summary, thresholds)), hide_index=True, width='stretch')
 
     default_index = (slots.index(default_time) if default_time in slots else 0)
     selected_slot = st.selectbox("Departure slot", slots, key=f"{direction}-slot", index=default_index)
@@ -104,7 +104,7 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
     st.markdown("**Distribution and reliability**")
     statistics_table = pd.DataFrame({"Metric": ["Mean", "Median / P50", "P25", "P75", "P90", "P95", "Minimum", "Maximum", "Standard deviation", "IQR", "P95 − P50"],
                                      "Duration": [minutes(stats[key]) for key in ("mean", "p50", "p25", "p75", "p90", "p95", "minimum", "maximum", "standard_deviation", "interquartile_range", "p95_p50_spread")]})
-    st.dataframe(styled_dataframe(statistics_table), hide_index=True, use_container_width=True)
+    st.dataframe(styled_dataframe(statistics_table), hide_index=True, width='stretch')
 
     st.markdown("**Traffic delay**")
     st.caption(f"Calculated from traffic-aware minus static duration; n={delays['delay_observation_count']}.")
@@ -118,7 +118,7 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
     probability_rows = pd.DataFrame({"Threshold": [f"> {threshold:g} min" for threshold in probabilities],
                                      "Probability": [percentage(value) for value in probabilities.values()],
                                      "Basis": [f"{stats['observation_count']} successful observations" for _ in probabilities]})
-    st.dataframe(styled_dataframe(probability_rows), hide_index=True, use_container_width=True)
+    st.dataframe(styled_dataframe(probability_rows), hide_index=True, width='stretch')
 
     st.markdown("**Data coverage**")
     coverage_columns = st.columns(4)
@@ -135,7 +135,7 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
             alt.Y("count():Q", title="Observations"),
             tooltip=[alt.Tooltip("count():Q", title="Observations")],
         ).properties(title=f"Observed duration distribution — {selected_slot}")
-        st.altair_chart(histogram, use_container_width=True)
+        st.altair_chart(histogram, width='stretch')
 
     box_data = direction_data[direction_data["api_success"] & direction_data["duration_seconds"].notna()].copy()
     if not box_data.empty:
@@ -145,7 +145,7 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
             y=alt.Y("Duration (minutes):Q", title="Commute duration (minutes)"),
             tooltip=[alt.Tooltip("departure_time:N", title="Departure"), alt.Tooltip("Duration (minutes):Q", format=".1f")],
         ).properties(title="Duration distribution by departure slot")
-        st.altair_chart(box_plot, use_container_width=True)
+        st.altair_chart(box_plot, width='stretch')
 
 
 def render_route_comparison(frame: pd.DataFrame, route_ids: list[str], start_date: date,
@@ -158,7 +158,18 @@ def render_route_comparison(frame: pd.DataFrame, route_ids: list[str], start_dat
     if not slots:
         st.info("There are no scheduled collection slots for that direction in this date range.")
         return
-    departure_slot = st.selectbox("Departure slot", slots, key="comparison-slot")
+    
+    if direction == "outbound":
+        default_time = "09:30"
+    else:
+        default_time = "16:00"
+    default_index = (slots.index(default_time) if default_time in slots else 0)
+    departure_slot = st.selectbox("Departure slot", slots, key="comparison-slot", index=default_index)
+
+    st.caption(
+        f"{direction.title()} · {departure_slot} · {start_date:%b %-d} – {end_date:%b %-d, %Y}"
+    )
+
     rows: list[dict[str, str | float | int]] = []
     for route_id in route_ids:
         selected = filter_observations(frame, route_id, direction, start_date, end_date, departure_slot)
@@ -184,7 +195,7 @@ def render_route_comparison(frame: pd.DataFrame, route_ids: list[str], start_dat
         for threshold, probability in threshold_probabilities(selected, thresholds).items():
             row[f"> {threshold:g} min"] = percentage(probability)
         rows.append(row)
-    st.dataframe(styled_dataframe(pd.DataFrame(rows)), hide_index=True, use_container_width=True)
+    st.dataframe(styled_dataframe(pd.DataFrame(rows)), hide_index=True, width='stretch')
     st.caption("Percentile and threshold metrics use successful observations only. Treat routes with small sample sizes or low coverage as less certain.")
 
 
@@ -205,6 +216,9 @@ def main() -> None:
         st.info("Choose a start and end date to load observations.")
         return
     start_date, end_date = date_range
+
+    st.sidebar.caption(f"{start_date:%b %-d, %Y} - {end_date:%b %-d, %Y} · {((end_date - start_date).days + 1)} days")
+    
     try:
         thresholds = parse_thresholds(threshold_text)
     except ValueError:
@@ -222,10 +236,10 @@ def main() -> None:
         if view != "Route Comparison":
             route_id = st.selectbox("Route", available_routes)
         
-        
-        if st.button("Refresh data", use_container_width=True):
+        if st.button("Refresh data", width='stretch'):
             load_data.clear()
             st.rerun()
+
     if view == "Outbound":
         render_direction(frame, route_id, "outbound", start_date, end_date, thresholds, default_time="09:30")
     elif view == "Return":
