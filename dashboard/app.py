@@ -185,35 +185,127 @@ def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_d
         st.altair_chart(box_plot, width='stretch')
 
 
-def render_route_comparison(frame: pd.DataFrame, route_ids: list[str], start_date: date,
-                            end_date: date, thresholds: tuple[int, ...]) -> None:
-    """Compare every configured candidate route at one direction and time."""
-    st.subheader("Route comparison")
-    st.caption("Compare candidate routes at one departure slot. This table intentionally shows the separate reliability measures instead of producing a commute score.")
-    direction = st.radio("Direction", ("Outbound", "Return"), horizontal=True, key="comparison-direction").lower()
-    slots = sorted({slot.strftime("%H:%M") for slot in expected_slots(start_date, end_date, direction, TIMEZONE)})
-    if not slots:
-        st.info("There are no scheduled collection slots for that direction in this date range.")
-        return
-    
-    if direction == "outbound":
-        default_time = "09:30"
-    else:
-        default_time = "16:00"
-    default_index = (slots.index(default_time) if default_time in slots else 0)
-    departure_slot = st.selectbox("Departure slot", slots, key="comparison-slot", index=default_index)
 
+def render_route_comparison(
+    frame: pd.DataFrame,
+    route_ids: list[str],
+    start_date: date,
+    end_date: date,
+    thresholds: tuple[int, ...],
+) -> None:
+    """Compare candidate routes using observations from selected weekdays."""
+    st.subheader("Route comparison")
     st.caption(
-        f"{direction.title()} · {departure_slot} · {start_date:%b %-d} – {end_date:%b %-d, %Y}"
+        "Compare routes at one departure slot. All metrics are recalculated "
+        "using only the selected weekdays."
     )
 
-    rows: list[dict[str, str | float | int]] = []
+    direction = st.radio(
+        "Direction",
+        ("Outbound", "Return"),
+        horizontal=True,
+        key="comparison-direction",
+    ).lower()
+
+    slots = sorted({
+        slot.strftime("%H:%M")
+        for slot in expected_slots(
+            start_date, end_date, direction, TIMEZONE
+        )
+    })
+
+    if not slots:
+        st.info(
+            "There are no scheduled collection slots for that direction "
+            "in this date range."
+        )
+        return
+
+    default_time = "09:30" if direction == "outbound" else "16:00"
+    default_index = slots.index(default_time) if default_time in slots else 0
+
+    departure_slot = st.selectbox(
+        "Departure slot",
+        slots,
+        key="comparison-slot",
+        index=default_index,
+    )
+
+    st.caption(
+        f"{direction.title()} · {departure_slot} · "
+        f"{start_date:%b %-d} – {end_date:%b %-d, %Y}"
+    )
+
+    # Weekday selection
+    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    st.markdown("**Include weekdays**")
+    weekday_columns = st.columns(7)
+    selected_weekdays: list[str] = []
+
+    for i, weekday in enumerate(weekday_order):
+        with weekday_columns[i]:
+            if st.checkbox(
+                weekday[:3],
+                value=weekday in weekday_order[:5],
+                key=f"comparison-weekday-{weekday}",
+            ):
+                selected_weekdays.append(weekday)
+
+    if not selected_weekdays:
+        st.info("Select at least one weekday to compare routes.")
+        return
+
+    # Restrict the expected collection slots to selected weekdays.
+    expected = {
+        slot
+        for slot in expected_slots(
+            start_date, end_date, direction, TIMEZONE, departure_slot
+        )
+        if slot.strftime("%A") in selected_weekdays
+    }
+
+    rows: list[dict[str, str | int]] = []
+
     for route_id in route_ids:
-        selected = filter_observations(frame, route_id, direction, start_date, end_date, departure_slot)
+        # Filter by route, direction, date range, and departure slot.
+        selected = filter_observations(
+            frame,
+            route_id,
+            direction,
+            start_date,
+            end_date,
+            departure_slot,
+        )
+
+        # Restrict all calculations to the selected weekdays.
+        selected = selected[
+            pd.to_datetime(selected["date_local"]).dt.day_name().isin(
+                selected_weekdays
+            )
+        ].copy()
+
+        # Calculate duration and traffic-delay metrics.
         stats = duration_statistics(selected)
         delay = traffic_delay_statistics(selected)
-        coverage = coverage_statistics(selected, start_date, end_date, direction, TIMEZONE, departure_slot)
-        row: dict[str, str | float | int] = {
+
+        # Calculate coverage against expected slots on selected weekdays only.
+        recorded_slots = set(selected["scheduled_slot"].dropna())
+        successful = selected[
+            selected["api_success"] & selected["duration_seconds"].notna()
+        ]
+        successful_slots = set(successful["scheduled_slot"].dropna())
+
+        expected_count = len(expected)
+        recorded_count = len(recorded_slots & expected)
+        successful_count = len(successful_slots & expected)
+
+        coverage_percentage = (
+            recorded_count / expected_count * 100
+            if expected_count else 0.0
+        )
+
+        row: dict[str, str | int] = {
             "Route": route_id,
             "Successful observations": stats["observation_count"],
             "Unique days": stats["unique_days"],
@@ -221,19 +313,47 @@ def render_route_comparison(frame: pd.DataFrame, route_ids: list[str], start_dat
             "P90": minutes(stats["p90"]),
             "P95": minutes(stats["p95"]),
             "Bad-day spread": minutes(stats["bad_day_spread"]),
-            "P90/P50 ratio": "—" if stats["p90_p50_ratio"] is None else f"{stats['p90_p50_ratio']:.2f}×",
-            "Median traffic delay": minutes(delay["median_traffic_delay"]),
+            "P90/P50 ratio": (
+                "—"
+                if stats["p90_p50_ratio"] is None
+                else f"{stats['p90_p50_ratio']:.2f}×"
+            ),
+            "Median traffic delay": minutes(
+                delay["median_traffic_delay"]
+            ),
             "P90 traffic delay": minutes(delay["p90_traffic_delay"]),
-            "Recorded / expected": f"{coverage['recorded_observations']} / {coverage['expected_observations']}",
-            "Coverage": f"{coverage['coverage_percentage']:.0f}%",
-            "Missing": coverage["missing_observations"],
-            "Failed": coverage["failed_observations"],
+            "Recorded / expected": f"{recorded_count} / {expected_count}",
+            "Coverage": f"{coverage_percentage:.0f}%",
+            "Missing": max(expected_count - recorded_count, 0),
+            "Failed": max(recorded_count - successful_count, 0),
         }
-        for threshold, probability in threshold_probabilities(selected, thresholds).items():
+
+        # Probability of exceeding each configured duration threshold.
+        for threshold, probability in threshold_probabilities(
+            selected, thresholds
+        ).items():
             row[f"> {threshold:g} min"] = percentage(probability)
+
         rows.append(row)
-    st.dataframe(styled_dataframe(pd.DataFrame(rows)), hide_index=True, width='stretch')
-    st.caption("Percentile and threshold metrics use successful observations only. Treat routes with small sample sizes or low coverage as less certain.")
+
+    if rows:
+        comparison_table = pd.DataFrame(rows)
+
+        st.dataframe(
+            styled_comparison_dataframe(comparison_table),
+            hide_index=True,
+            width="stretch",
+        )
+
+        st.caption(
+            "Percentiles and threshold probabilities use successful "
+            "observations only. Coverage is calculated against expected "
+            "collection slots on the selected weekdays. Check sample size "
+            "and unique days when comparing routes."
+        )
+    else:
+        st.info("No routes are available for comparison.")
+
 
 
 def main() -> None:
