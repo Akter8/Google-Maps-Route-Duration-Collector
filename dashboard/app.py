@@ -71,6 +71,43 @@ def styled_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         axis=1,
     )
 
+def styled_comparison_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    styler = df.style
+
+    # Alternate row shading first.
+    styler = styler.apply(
+        lambda row: [
+            "background-color: rgba(128, 128, 128, 0.08)"
+            if row.name % 2
+            else ""
+            for _ in row
+        ],
+        axis=1,
+    )
+
+    highlight_style = (
+        "background-color: rgba(46, 160, 67, 0.15); font-weight: 600"
+    )
+
+    # Metrics where lower is better.
+    for column in ("P50", "P90", "P95"):
+        if column in df.columns:
+            values = pd.to_numeric(
+                df[column].str.extract(r"([\d.]+)")[0],
+                errors="coerce",
+            )
+
+            if values.notna().any():
+                best_value = values.min()
+                best_indices = values[values == best_value].index
+
+                styler = styler.map(
+                    lambda _: highlight_style,
+                    subset=pd.IndexSlice[best_indices, [column]],
+                )
+
+    return styler
+
 
 def render_direction(frame: pd.DataFrame, route_id: str, direction: str, start_date: date,
                      end_date: date, thresholds: tuple[int, ...], default_time:str=None) -> None:
