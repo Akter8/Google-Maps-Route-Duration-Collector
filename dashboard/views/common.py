@@ -36,7 +36,7 @@ def styled_comparison_dataframe(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         if column not in df.columns:
             continue
         values = pd.to_numeric(
-            df[column].astype(str).str.extract(r"([\\d.]+)")[0], errors="coerce"
+            df[column].astype(str).str.extract(r"([\d.]+)")[0], errors="coerce"
         )
         if values.notna().any():
             best_indices = values[values == values.min()].index
