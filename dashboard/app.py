@@ -266,6 +266,7 @@ def render_route_comparison(
     }
 
     rows: list[dict[str, str | int]] = []
+    select_count = 0
 
     for route_id in route_ids:
         # Filter by route, direction, date range, and departure slot.
@@ -277,6 +278,7 @@ def render_route_comparison(
             end_date,
             departure_slot,
         )
+        select_count += len(selected)
 
         # Restrict all calculations to the selected weekdays.
         selected = selected[
@@ -344,6 +346,8 @@ def render_route_comparison(
             hide_index=True,
             width="stretch",
         )
+
+        st.caption("Found " + str(select_count) + " number of rows from db matching the criteria.")
 
         st.caption(
             "Percentiles and threshold probabilities use successful "

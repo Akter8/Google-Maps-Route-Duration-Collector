@@ -28,8 +28,35 @@ class TrafficDatabase:
     def upsert_observation(self, record: dict[str, Any]) -> None:
         self.client.table("traffic_observations").upsert(record, on_conflict="route_id,scheduled_slot").execute()
 
-    def fetch_observations(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        query = self.client.table("traffic_observations").select("*").order("scheduled_slot")
-        for key, value in (filters or {}).items():
-            if value is not None: query = query.eq(key, value)
-        return self._data(query.execute())
+    def fetch_observations(
+        self,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch all matching observations, handling Supabase pagination."""
+        page_size = 1000
+        offset = 0
+        all_rows: list[dict[str, Any]] = []
+
+        while True:
+            query = (
+                self.client.table("traffic_observations")
+                .select("*")
+                .order("scheduled_slot")
+                .order("id")
+                .range(offset, offset + page_size - 1)
+            )
+
+            for key, value in (filters or {}).items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+            rows = self._data(query.execute())
+            all_rows.extend(rows)
+
+            if len(rows) < page_size:
+                break
+
+            offset += page_size
+
+        return all_rows
+

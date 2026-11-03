@@ -30,6 +30,7 @@ def make_record(route_id: str, direction: str, actual: datetime, slot: datetime,
 def collect(settings, now: datetime | None = None, force: bool = False, dry_run: bool = False) -> int:
     LOG.info("")
     LOG.info("Starting new collect round.")
+    LOG.info("Settings.max_monthly_google_requests: " + str(settings.max_monthly_google_requests))
     actual = now or local_now(settings.timezone)
     slot = intended_slot(actual, settings.slot_tolerance_minutes)
     if not slot and not force:
